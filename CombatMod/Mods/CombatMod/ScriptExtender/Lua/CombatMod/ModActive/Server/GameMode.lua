@@ -97,24 +97,25 @@ function GameMode.GenerateScenario(score, tiers)
     local preferredRounds = 3
     local emptyRoundChance = 0.2 -- 20% chance for a round to be empty
     local scoreTolerance = tiers[1].value
-    if score > 70 then
-       emptyRoundChance = 0.1
-    elseif score > 120 then
-        preferredRounds = 2
-        emptyRoundChance = 0.05
-    elseif score > 200 then
-        preferredRounds = 2
+
+    if score > 3000 then
+        maxRounds = math.ceil(score / 100)
+        preferredRounds = math.ceil(score / 300)
         emptyRoundChance = 0
+        scoreTolerance = math.ceil(score / 30)
     elseif score > 500 then
         maxRounds = 20
         preferredRounds = 4
         emptyRoundChance = 0
         scoreTolerance = 50
-    elseif score > 3000 then
-        maxRounds = math.ceil(score / 100)
-        preferredRounds = math.ceil(score / 300)
+    elseif score > 200 then
+        preferredRounds = 2
         emptyRoundChance = 0
-        scoreTolerance = math.ceil(score / 30)
+    elseif score > 120 then
+        preferredRounds = 2
+        emptyRoundChance = 0.05
+    elseif score > 70 then
+        emptyRoundChance = 0.1
     end
 
     score = score >= tiers[1].value and score or tiers[1].value
@@ -128,7 +129,7 @@ function GameMode.GenerateScenario(score, tiers)
             weights[i] = weight
             totalWeight = totalWeight + weight
         end
-        local randomWeight = math.newRandom() * totalWeight
+        local randomWeight = math.random() * totalWeight
         for i = minRounds, maxRounds do
             randomWeight = randomWeight - weights[i]
             if randomWeight <= 0 then
@@ -155,7 +156,7 @@ function GameMode.GenerateScenario(score, tiers)
             end
         end
         if #validTiers > 0 then
-            local randomWeight = math.newRandom() * totalWeight
+            local randomWeight = math.random() * totalWeight
             for _, entry in ipairs(validTiers) do
                 randomWeight = randomWeight - entry.weight
                 if randomWeight <= 0 then
@@ -168,131 +169,128 @@ function GameMode.GenerateScenario(score, tiers)
     end
 
     -- generate a random timeline with bias and possible empty rounds
-    local function generateTimeline(maxValue, failed)
-        failed = failed + 1
-        if failed > 1000 then
-            L.Error("Failed to generate timeline", maxValue)
-            return {}
+    local function generateTimeline(maxValue)
+        -- Compute expected value
+        local valid_tiers = {}
+        local total_weight = 0
+        for i, tier in ipairs(tiers) do
+            if i <= playerLevel and score >= (tier.min or tier.value) then
+                local weight = tier.weight
+                table.insert(valid_tiers, {tier = tier, weight = weight})
+                total_weight = total_weight + weight
+            end
         end
-
-        local timeline = {}
-        local numRounds = weightedRandom()
-        local remainingValue = maxValue
-        -- initialize rounds with empty tables
-        for i = 1, numRounds do
-            table.insert(timeline, {})
+        local expected_v = 0
+        if total_weight > 0 then
+            for _, entry in ipairs(valid_tiers) do
+                expected_v = expected_v + (entry.weight / total_weight) * entry.tier.value
+            end
+        else
+            expected_v = tiers[1].value  -- fallback
         end
+        local expected_enemies = maxValue / expected_v
+        local max_per_round = math.max(10, math.ceil(expected_enemies / preferredRounds))
+        max_per_round = math.min(30, max_per_round)
 
-
-        local roundsSkipped = {}
-        local function distribute()
-            local roundIndex = math.random(1, numRounds)
-
-            if #timeline[roundIndex] > 10 then
-                return
+        local attempts = 0
+        while true do
+            attempts = attempts + 1
+            if attempts > 10000 then
+                L.Error("Failed to generate timeline", maxValue)
+                return {}
             end
 
-            if roundsSkipped[roundIndex] then
-                return
-            end
+            local timeline = {{}}
+            local num_rounds = 1
+            local remainingValue = maxValue
+            -- initialize rounds with empty tables
 
-            -- add a chance for the round to remain empty, except for the first round
-            if
-                roundIndex > 1
-                and not roundsSkipped[roundIndex - 1]
-                and #timeline[roundIndex] == 0
-                and math.random() < emptyRoundChance
-            then -- chance to skip adding a tier
-                roundsSkipped[roundIndex] = true
-                remainingValue = remainingValue + maxValue * emptyRoundChance
-                return
-            end
+            local roundsSkipped = {}
+            local function distribute()
+                -- Find open rounds (with space for more enemies)
+                local open_rounds = {}
+                for i = 1, num_rounds do
+                    if #timeline[i] < max_per_round then
+                        table.insert(open_rounds, i)
+                    end
+                end
 
-            local tier = selectTier(remainingValue)
-
-            if remainingValue - tier.value >= 0 then
-                table.insert(timeline[roundIndex], tier.name)
-                remainingValue = remainingValue - tier.value
-
-                local max = math.ceil(maxValue / 100)
-
-                if #timeline[roundIndex] > max and numRounds < maxRounds then
-                    -- too strong for single round
-                    if tier.name == C.EnemyTier[5] then
-                        if not timeline[roundIndex + 1] then
-                            table.insert(timeline, roundIndex + 1, {})
-                            numRounds = numRounds + 1
+                local roundIndex
+                if #open_rounds > 0 then
+                    -- Prefer filling existing rounds sequentially (max len first, then lowest index)
+                    table.sort(open_rounds, function(a, b)
+                        local la = #timeline[a]
+                        local lb = #timeline[b]
+                        if la ~= lb then
+                            return la > lb
                         end
-                    elseif tier.name == C.EnemyTier[6] or tier.name == C.EnemyTier[7] then
-                        table.insert(timeline, {})
-                        numRounds = numRounds + 1
-                        if not timeline[roundIndex + 1] then
-                            table.insert(timeline, roundIndex + 1, {})
-                            numRounds = numRounds + 1
-                        end
-                    elseif tier.name == C.EnemyTier[8] then
-						table.insert(timeline, {})
-						table.insert(timeline, {})
-                        numRounds = numRounds + 2
-                        if not timeline[roundIndex + 1] then
-                            table.insert(timeline, roundIndex + 1, {})
-                            numRounds = numRounds + 1
-                        end
-						if not timeline[roundIndex + 2] then
-                            table.insert(timeline, roundIndex + 2, {})
-                            numRounds = numRounds + 1
-                        end
-					end
+                        return a < b
+                    end)
+                    roundIndex = open_rounds[1]
+                else
+                    -- All full: add a new round dynamically
+                    table.insert(timeline, {})
+                    num_rounds = num_rounds + 1
+                    roundIndex = num_rounds
+                end
+
+                if roundsSkipped[roundIndex] then
+                    return
+                end
+
+                -- add a chance for the round to remain empty, except for the first round
+                if
+                    roundIndex > 1
+                    and not roundsSkipped[roundIndex - 1]
+                    and #timeline[roundIndex] == 0
+                    and math.random() < emptyRoundChance
+                then -- chance to skip adding a tier
+                    roundsSkipped[roundIndex] = true
+                    remainingValue = remainingValue + maxValue * emptyRoundChance
+                    return
+                end
+
+                local tier = selectTier(remainingValue)
+
+                if remainingValue - tier.value >= 0 then
+                    table.insert(timeline[roundIndex], tier.name)
+                    remainingValue = remainingValue - tier.value
                 end
             end
-        end
 
-        -- distribute the total value randomly across rounds
-        local failsafe = 0
-        while remainingValue > 0 do
-            distribute()
+            -- distribute the total value randomly across rounds
+            local failsafe = 0
+            while remainingValue > 0 do
+                distribute()
 
-            if remainingValue < scoreTolerance then
-                break
+                if remainingValue < scoreTolerance then
+                    break
+                end
+
+                failsafe = failsafe + 1
+
+                if failsafe > maxValue * 1000 then
+                    if Mod.Debug then
+                        L.Error("Failsafe", remainingValue, maxValue)
+                    end
+                    break  -- Break to retry the whole timeline
+                end
             end
 
-            failsafe = failsafe + 1
-
-            if failsafe > maxValue * 100 then
+            -- ensure the first round is not empty
+            if #timeline[1] == 0 then
                 if Mod.Debug then
-                    L.Error("Failsafe", remainingValue, maxValue)
+                    L.Error("Empty first round", remainingValue, maxValue)
                 end
-                return generateTimeline(maxValue, failed)
-            end
-        end
-
-        -- ensure the first round is not empty
-        if #timeline[1] == 0 then
-            if Mod.Debug then
-                L.Error("Empty first round", remainingValue, maxValue)
-            end
-            return generateTimeline(maxValue, failed)
-        end
-
-        local maxEmpty = math.min(2, math.max(score / 100, numRounds / 3))
-
-        -- ensure no two consecutive rounds exist
-        for i = 2, #timeline do
-            if #timeline[i] <= maxEmpty and #timeline[i - 1] <= maxEmpty then
-                if Mod.Debug then
-                    L.Error("Consecutive empty rounds", remainingValue, maxValue, maxEmpty)
+                -- Retry
+            else
+                -- Remove trailing empty rounds
+                while #timeline > 0 and #timeline[#timeline] == 0 do
+                    table.remove(timeline)
                 end
-                return generateTimeline(maxValue, failed)
+                return timeline
             end
         end
-
-        -- ensure the last round does not exceed the previous round
-        if #timeline > 1 and #timeline[#timeline] > #timeline[#timeline - 1] then
-            L.Error("Last round is too big", #timeline[#timeline], #timeline[#timeline - 1])
-            return generateTimeline(maxValue, failed)
-        end
-
-        return timeline
     end
 
     local partySizeMod = Player.PartySize()
@@ -320,7 +318,7 @@ function GameMode.GenerateScenario(score, tiers)
         spawnValue = 4
     end
 
-    return generateTimeline(spawnValue, 0)
+    return generateTimeline(spawnValue)
 end
 
 function GameMode.UpdateRogueScore(score)

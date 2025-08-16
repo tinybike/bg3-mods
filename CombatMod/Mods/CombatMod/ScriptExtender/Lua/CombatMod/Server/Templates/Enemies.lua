@@ -337,18 +337,6 @@ return {
 	},
 	{
 		Info = {
-			AC = 21,
-			Level = 16,
-			Pwr = 150.0,
-			Stats = 19,
-			Vit = 666,
-		},
-		Name = "MOD_Raphael_Combat",
-		TemplateId = "cecb3b64-77b9-4eb4-b99f-8029ac168cd7",
-		Tier = "mythical",
-	},
-	{
-		Info = {
 			AC = 10,
 			Level = 1,
 			Pwr = 11.0,
